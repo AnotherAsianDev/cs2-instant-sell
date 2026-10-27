@@ -32,6 +32,10 @@ internal sealed class SellerConfig {
 	// Run a real sell automatically every N hours. 0 means never (only the commands sell).
 	public int AutoRunHours { get; init; }
 
+	// Run a real sell automatically at these fixed times of day (24h "HH:mm", local time of the machine running ASF),
+	// e.g. [ "04:00" ] or [ "04:00", "16:30" ]. If set, this is used instead of AutoRunHours.
+	public List<string> AutoRunTimes { get; init; } = [];
+
 	private static readonly JsonSerializerOptions Options = new() { PropertyNameCaseInsensitive = true, ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
 
 	internal static SellerConfig? Parse(IReadOnlyDictionary<string, JsonElement>? additionalConfigProperties, out string? error) {

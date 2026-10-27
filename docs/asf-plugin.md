@@ -31,7 +31,8 @@ Add the block **inside the outer braces** of the bot's config file, with a comma
 		"AutoConfirm": true,
 		"MaxItemsPerRun": 3,
 		"Keep": [ "Dragon Lore", "Souvenir" ],
-		"AutoRunHours": 0
+		"AutoRunHours": 0,
+		"AutoRunTimes": [ "04:00" ]
 	}
 }
 ```
@@ -52,8 +53,9 @@ If you edit bot configs with ASF-ui, check the file afterwards: this plugin has 
 | `MaxItemsPerRun` | `0` | Safety cap of items sold per run. `0` means no cap. |
 | `Keep` | `[]` | Texts; an item whose market name contains one of them is never sold (case-insensitive). |
 | `AutoRunHours` | `0` | Real-sell automatically every N hours. `0` means never. |
+| `AutoRunTimes` | `[]` | Real-sell automatically every day at these fixed times, 24h `"HH:mm"` in the local time of the machine running ASF, e.g. `[ "04:00" ]` or `[ "04:00", "16:30" ]`. If set, it is used instead of `AutoRunHours`. Invalid entries are ignored with a warning. |
 
-The first automatic run happens 10 minutes after ASF starts (or after the bot config is reloaded), then every `AutoRunHours` hours. A run is skipped if the bot is not logged in, or if another run is still going.
+With `AutoRunTimes`, runs happen at those clock times every day (the log shows the next run time when the config loads). With `AutoRunHours`, the first run happens 10 minutes after ASF starts (or after the bot config is reloaded), then every N hours. A run is skipped if the bot is not logged in, or if another run is still going.
 
 ## Commands
 
