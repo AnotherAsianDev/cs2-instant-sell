@@ -54,3 +54,7 @@ docs/                   Guides
 ## Build the plugin yourself
 
 See [docs/asf-plugin.md](docs/asf-plugin.md#building-from-source).
+
+## License
+
+MIT, see [LICENSE](LICENSE).
