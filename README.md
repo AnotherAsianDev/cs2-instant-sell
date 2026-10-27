@@ -19,13 +19,14 @@ Documentation:
 
 **Browser extension**
 
-1. Open `brave://extensions` (or `chrome://extensions`, `edge://extensions`), turn on *Developer mode*.
-2. *Load unpacked* and select the [`extension/`](extension) folder.
-3. Open your CS2 inventory on steamcommunity.com and click **⚡ Instant Sell**.
+1. Download `CS2InstantSell-extension.zip` from the [latest release](../../releases/latest) and unzip it (or use the [`extension/`](extension) folder of this repo).
+2. Open `brave://extensions` (or `chrome://extensions`, `edge://extensions`), turn on *Developer mode*.
+3. *Load unpacked* and select the unzipped folder (the one containing `manifest.json`).
+4. Open your CS2 inventory on steamcommunity.com and click **⚡ Instant Sell**.
 
 **ASF plugin**
 
-1. Copy [`asf-plugin/dist/CS2InstantSell.dll`](asf-plugin/dist) to `ASF/plugins/CS2InstantSell/CS2InstantSell.dll`.
+1. Download `CS2InstantSell.dll` from the [latest release](../../releases/latest) (or [`asf-plugin/dist/`](asf-plugin/dist)) and copy it to `ASF/plugins/CS2InstantSell/CS2InstantSell.dll`.
 2. Add the `CS2InstantSell` block from [`example-bot-config.json`](asf-plugin/example-bot-config.json) to the config of the bot that should sell.
 3. Restart ASF, then run `!isell <bot>` (dry run) and later `!isellgo <bot>`.
 
