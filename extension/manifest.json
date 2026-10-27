@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "CS2 Instant Sell",
+  "version": "1.0.0",
+  "description": "Sell your CS2 inventory instantly at the highest Steam Market buy order.",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://steamcommunity.com/id/*/inventory*",
+        "https://steamcommunity.com/profiles/*/inventory*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

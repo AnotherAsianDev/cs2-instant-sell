@@ -1,0 +1,15 @@
+{
+	"Name": "yourbot",
+	"Enabled": true,
+
+	"CS2InstantSell": {
+		"Enabled": true,
+		"MinPayout": 0.01,
+		"MaxDropPercent": 20,
+		"NoDropLimitBelow": 0.50,
+		"AutoConfirm": true,
+		"MaxItemsPerRun": 3,
+		"Keep": [ "Dragon Lore", "Souvenir" ],
+		"AutoRunHours": 0
+	}
+}
