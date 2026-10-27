@@ -57,6 +57,8 @@ If you edit bot configs with ASF-ui, check the file afterwards: this plugin has 
 
 With `AutoRunTimes`, runs happen at those clock times every day (the log shows the next run time when the config loads). With `AutoRunHours`, the first run happens 10 minutes after ASF starts (or after the bot config is reloaded), then every N hours. A run is skipped if the bot is not logged in, or if another run is still going.
 
+**Docker and time zones:** `AutoRunTimes` uses the clock of the machine or container running ASF, which in Docker is usually UTC. Set the time zone on the ASF service, for example `environment: - TZ=Europe/Zurich` in `docker-compose.yml`, then recreate the container. The log line "Next run: ..." shows the time the plugin expects.
+
 ## Commands
 
 Need **Master** access. They work in the ASF console, the ASF-ui command box, the IPC API and Steam chat. `<bot>` can be a bot name, several separated by commas, or omitted (then the bot that received the command is used).
