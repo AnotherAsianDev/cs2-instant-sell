@@ -1,0 +1,31 @@
+#cs2is-fab {
+  position: fixed; right: 20px; bottom: 20px; z-index: 99999;
+  background: #5c7e10; color: #fff; border: 0; border-radius: 4px;
+  padding: 10px 16px; font-size: 14px; cursor: pointer; box-shadow: 0 2px 8px #000a;
+}
+#cs2is-fab:hover { background: #6e9714; }
+#cs2is-panel {
+  position: fixed; right: 20px; bottom: 70px; z-index: 99999;
+  width: 640px; height: 85vh; max-height: 85vh; display: none; flex-direction: column;
+  background: #1b2838; color: #c6d4df; border: 1px solid #3a4b5e;
+  border-radius: 6px; box-shadow: 0 4px 20px #000c; font-size: 13px;
+}
+#cs2is-panel.open { display: flex; }
+#cs2is-panel h3 { margin: 0; padding: 10px 14px; background: #171a21; font-size: 15px; color: #fff; }
+#cs2is-panel .row { padding: 8px 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+#cs2is-panel input[type=number] { width: 70px; background: #0e1620; color: #fff; border: 1px solid #3a4b5e; padding: 3px 5px; }
+#cs2is-panel button { background: #2a475e; color: #fff; border: 0; padding: 6px 12px; border-radius: 3px; cursor: pointer; }
+#cs2is-panel button:hover:not(:disabled) { background: #3b6a8c; }
+#cs2is-panel button:disabled { opacity: .4; cursor: default; }
+#cs2is-panel button.danger { background: #a33; }
+#cs2is-panel button.danger:hover:not(:disabled) { background: #c44; }
+#cs2is-panel > * { flex-shrink: 0; }
+#cs2is-list { overflow-y: auto; flex: 3 1 0; min-height: 140px; border-top: 1px solid #2a3a4c; }
+#cs2is-list table { width: 100%; border-collapse: collapse; }
+#cs2is-list td, #cs2is-list th { padding: 3px 8px; text-align: left; }
+#cs2is-list td.num, #cs2is-list th.num { text-align: right; white-space: nowrap; }
+#cs2is-list tr:nth-child(even) { background: #16202d; }
+#cs2is-list img { width: 36px; height: 27px; object-fit: contain; vertical-align: middle; }
+#cs2is-list tr.skip { opacity: .45; }
+#cs2is-log { flex: 2 1 0; min-height: 150px; overflow-y: auto; user-select: text; background: #0e1620; padding: 6px 14px; font-family: monospace; font-size: 12px; white-space: pre-wrap; }
+#cs2is-summary { padding: 6px 14px; color: #fff; }
