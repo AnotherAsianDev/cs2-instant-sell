@@ -55,7 +55,21 @@ internal sealed partial class SellerRunner : IDisposable {
 		AutoTimer?.Dispose();
 		AutoTimer = null;
 
-		if (config.Enabled && (config.AutoRunHours > 0)) {
+		List<TimeSpan> times = [];
+
+		foreach (string text in config.AutoRunTimes) {
+			if (TimeSpan.TryParseExact(text?.Trim(), @"h\:mm", System.Globalization.CultureInfo.InvariantCulture, out TimeSpan t) && (t >= TimeSpan.Zero) && (t < TimeSpan.FromHours(24))) {
+				times.Add(t);
+			} else {
+				Warn($"Ignoring invalid AutoRunTimes entry \"{text}\" (use 24h format like \"04:00\").");
+			}
+		}
+
+		if (config.Enabled && (times.Count > 0)) {
+			times.Sort();
+			ScheduleNext(times);
+			Info($"Enabled. Automatic real selling daily at {string.Join(", ", times.Select(t => t.ToString(@"hh\:mm")))} (local time). Next run: {NextRun(times):yyyy-MM-dd HH:mm}.");
+		} else if (config.Enabled && (config.AutoRunHours > 0)) {
 			TimeSpan period = TimeSpan.FromHours(config.AutoRunHours);
 
 			// First automatic run 10 minutes after the config is loaded, to give the bot time to log in.
@@ -70,6 +84,46 @@ internal sealed partial class SellerRunner : IDisposable {
 		} else {
 			Info(config.Enabled ? "Enabled. Sells only when you use the ISELLGO command." : "Disabled in this bot's config.");
 		}
+	}
+
+	private static DateTime NextRun(List<TimeSpan> times) {
+		DateTime now = DateTime.Now;
+		DateTime best = DateTime.MaxValue;
+
+		foreach (TimeSpan t in times) {
+			DateTime candidate = now.Date + t;
+
+			if (candidate <= now) {
+				candidate = candidate.AddDays(1);
+			}
+
+			if (candidate < best) {
+				best = candidate;
+			}
+		}
+
+		return best;
+	}
+
+	// One-shot timer that re-arms itself after each firing, so DST changes and long sleeps never drift.
+	private void ScheduleNext(List<TimeSpan> times) {
+		TimeSpan wait = NextRun(times) - DateTime.Now;
+
+		if (wait < TimeSpan.FromSeconds(1)) {
+			wait = TimeSpan.FromSeconds(1);
+		}
+
+		AutoTimer?.Dispose();
+
+		AutoTimer = new Timer(_ => {
+				if (!TryStart(false, "scheduled run")) {
+					Info("Scheduled run skipped (a run is already in progress).");
+				}
+
+				// Next occurrence is always later than now, so this cannot fire twice for the same slot.
+				ScheduleNext(times);
+			}, null, wait, Timeout.InfiniteTimeSpan
+		);
 	}
 
 	internal void Stop() => Cts?.Cancel();

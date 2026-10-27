@@ -10,6 +10,7 @@
 		"AutoConfirm": true,
 		"MaxItemsPerRun": 3,
 		"Keep": [ "Dragon Lore", "Souvenir" ],
-		"AutoRunHours": 0
+		"AutoRunHours": 0,
+		"AutoRunTimes": [ "04:00" ]
 	}
 }
