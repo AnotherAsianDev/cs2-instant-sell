@@ -2,7 +2,8 @@
 
 A plugin for [ArchiSteamFarm](https://github.com/JustArchiNET/ArchiSteamFarm) that sells a bot's CS2 items at the highest buy order, on command or on a schedule.
 
-- Compiled against **ASF 6.3.11.7** (.NET 10).
+- Compiled against **ASF 7.0.0.5** (.NET 11). ASF changes its plugin interfaces between major versions, so a plugin build only loads in the matching ASF generation. If ASF logs `Could not load type 'ArchiSteamFarm.Plugins.Interfaces...'` at startup, the plugin needs a rebuild for your ASF version.
+- Using ASF 6.x? Use the plugin from the older commit/tag (`git checkout` the commit before "Port to ASF 7"), which was built for ASF 6.3.11.7.
 - Per-bot on/off switch in each bot's own config.
 - Everything is logged through ASF's log, so you can follow it live in the ASF console and in the ASF-ui Log page.
 - Accepts the market confirmations itself using ASF's 2FA (optional).
@@ -106,7 +107,7 @@ During a real run: `SOLD [n] <item> for <price>`, `FAILED <item>: <reason>`, `bu
 
 ## Building from source
 
-Requirements: .NET 10 SDK and a folder with the ASF files of the version you run (the generic ASF release zip is enough: it contains `ArchiSteamFarm.dll`, `SteamKit2.dll`, `AngleSharp.dll`, `System.Composition.AttributedModel.dll`).
+Requirements: .NET 11 SDK and a folder with the ASF files of the version you run (the generic ASF release zip is enough: it contains `ArchiSteamFarm.dll`, `SteamKit2.dll`, `AngleSharp.dll`, `System.Composition.AttributedModel.dll`).
 
 ```bash
 cd asf-plugin

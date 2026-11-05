@@ -39,14 +39,14 @@ Documentation:
 
 ## Tested against
 
-- ASF **6.3.11.7** on .NET 10 (the plugin is compiled against this version).
+- ASF **7.0.0.5** on .NET 11 (the plugin is compiled against this version). For ASF 6.x use the DLL of the v1.0.0 release (see docs/asf-plugin.md).
 - Brave (Chromium) with Manifest V3.
 
 ## Repository layout
 
 ```
 extension/              Browser extension (Manifest V3, plain JavaScript, no build step)
-asf-plugin/             ASF plugin source (C#, .NET 10)
+asf-plugin/             ASF plugin source (C#, .NET 11)
 asf-plugin/dist/        Ready-to-use CS2InstantSell.dll built from that source
 tests/PricingTests/     Tests for the fee and price-ladder logic
 docs/                   Guides
