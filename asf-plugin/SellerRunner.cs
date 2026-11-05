@@ -22,7 +22,7 @@ internal sealed partial class SellerRunner : IDisposable {
 	private const uint AppID = 730;
 	private const ulong ContextID = 2;
 
-	private const WebBrowser.ERequestOptions KeepErrors = WebBrowser.ERequestOptions.ReturnClientErrors | WebBrowser.ERequestOptions.ReturnServerErrors | WebBrowser.ERequestOptions.AllowInvalidBodyOnErrors;
+	private const EWebRequestOptions KeepErrors = EWebRequestOptions.ReturnClientErrors | EWebRequestOptions.ReturnServerErrors | EWebRequestOptions.AllowInvalidBodyOnErrors;
 
 	private readonly Bot Bot;
 	private readonly SemaphoreSlim Gate = new(1, 1);

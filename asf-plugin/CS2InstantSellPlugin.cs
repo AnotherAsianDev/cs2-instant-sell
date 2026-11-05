@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Composition;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using ArchiSteamFarm.Core;
 using ArchiSteamFarm.Plugins.Interfaces;
@@ -12,22 +13,22 @@ using ArchiSteamFarm.Steam;
 namespace CS2InstantSell;
 
 [Export(typeof(IPlugin))]
-internal sealed class CS2InstantSellPlugin : IBot, IBotCommand2, IBotModules {
+internal sealed class CS2InstantSellPlugin : IBot, IBotCommand, IBotModules {
 	private readonly ConcurrentDictionary<string, SellerRunner> Runners = new(StringComparer.OrdinalIgnoreCase);
 
 	public string Name => "CS2InstantSell";
 
 	public Version Version => typeof(CS2InstantSellPlugin).Assembly.GetName().Version ?? throw new InvalidOperationException(nameof(Version));
 
-	public Task OnLoaded() {
+	public Task OnLoaded(CancellationToken cancellationToken = default) {
 		ASF.ArchiLogger.LogGenericInfo($"[CS2 Instant Sell] v{Version} loaded. Commands: ISELL <bot> (dry run), ISELLGO <bot> (sell), ISELLSTOP <bot>, ISELLSTATUS <bot>. Enable it per bot with \"{SellerConfig.PropertyName}\": {{ \"Enabled\": true }} in the bot's config.");
 
 		return Task.CompletedTask;
 	}
 
-	public Task OnBotInit(Bot bot) => Task.CompletedTask;
+	public Task OnBotInit(Bot bot, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-	public Task OnBotDestroy(Bot bot) {
+	public Task OnBotDestroy(Bot bot, CancellationToken cancellationToken = default) {
 		if (Runners.TryRemove(bot.BotName, out SellerRunner? runner)) {
 			runner.Dispose();
 		}
@@ -35,7 +36,7 @@ internal sealed class CS2InstantSellPlugin : IBot, IBotCommand2, IBotModules {
 		return Task.CompletedTask;
 	}
 
-	public Task OnBotInitModules(Bot bot, IReadOnlyDictionary<string, JsonElement>? additionalConfigProperties = null) {
+	public Task OnBotInitModules(Bot bot, IReadOnlyDictionary<string, JsonElement>? additionalConfigProperties = null, CancellationToken cancellationToken = default) {
 		SellerConfig? config = SellerConfig.Parse(additionalConfigProperties, out string? error);
 
 		if (error != null) {
@@ -58,14 +59,14 @@ internal sealed class CS2InstantSellPlugin : IBot, IBotCommand2, IBotModules {
 		return Task.CompletedTask;
 	}
 
-	public Task<string?> OnBotCommand(Bot bot, EAccess access, string message, string[] args, ulong steamID = 0) {
+	public Task<string?> OnBotCommand(Bot bot, EBotUserAccess access, string message, string[] args, ulong steamID = 0, CancellationToken cancellationToken = default) {
 		string command = args[0].ToUpperInvariant();
 
 		if (command is not ("ISELL" or "ISELLGO" or "ISELLSTOP" or "ISELLSTATUS")) {
 			return Task.FromResult<string?>(null);
 		}
 
-		if (access < EAccess.Master) {
+		if (access < EBotUserAccess.Master) {
 			return Task.FromResult<string?>("Access denied: Master permission is required.");
 		}
 
