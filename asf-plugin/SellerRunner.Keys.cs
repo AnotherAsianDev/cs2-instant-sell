@@ -1,26 +1,21 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 using System.Net;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using ArchiSteamFarm.Steam.Integration;
-using ArchiSteamFarm.Steam.Security;
 using ArchiSteamFarm.Web.Responses;
 using SteamKit2;
 
 namespace CS2InstantSell;
 
-// Optional: turn wallet funds into TF2 keys by instantly buying the cheapest market listings.
+// Optional: turn wallet funds into TF2 keys. For each key a buy order is placed at exactly the current lowest sell price,
+// which Steam fills immediately. The wallet balance is checked to confirm the key was really paid, otherwise the order is cancelled.
 internal sealed partial class SellerRunner {
 	private const uint KeyAppID = 440;
 	private const string KeyName = "Mann Co. Supply Crate Key";
-
-	private sealed record KeyListing(string ListingID, long Subtotal, long Fee) {
-		internal long Total => Subtotal + Fee;
-	}
 
 	private Uri KeyPage => new(ArchiWebHandler.SteamCommunityURL, $"/market/listings/{KeyAppID}/{Uri.EscapeDataString(KeyName)}");
 
@@ -59,37 +54,37 @@ internal sealed partial class SellerRunner {
 		while (bought < maxKeys) {
 			ct.ThrowIfCancellationRequested();
 
-			KeyListing? listing = await GetCheapestKeyAsync(wallet, ct).ConfigureAwait(false);
+			long ask = await GetKeyAskAsync(wallet, ct).ConfigureAwait(false);
 
-			if (listing == null) {
-				Warn(tag + "could not read the key listings, stopping.");
+			if (ask <= 0) {
+				Warn(tag + "could not read the current key price, stopping.");
 
 				break;
 			}
 
-			if (listing.Total > maxPrice) {
-				Info(tag + $"cheapest key costs {money(listing.Total)}, above your limit of {money(maxPrice)}. Not buying.");
+			if (ask > maxPrice) {
+				Info(tag + $"cheapest key costs {money(ask)}, above your limit of {money(maxPrice)}. Not buying.");
 
 				break;
 			}
 
 			long available = balance - keep;
 
-			if (available < listing.Total) {
-				Info(tag + $"cheapest key costs {money(listing.Total)}, only {money(Math.Max(0, available))} available above the kept balance. Done.");
+			if (available < ask) {
+				Info(tag + $"cheapest key costs {money(ask)}, only {money(Math.Max(0, available))} available above the kept balance. Done.");
 
 				break;
 			}
 
 			if (dryRun) {
-				long count = Math.Min(maxKeys, available / listing.Total);
-				Info(tag + $"DRY RUN: cheapest key {money(listing.Total)}; with the current balance about {count} key(s) would be bought (price checked again for every key).");
+				long count = Math.Min(maxKeys, available / ask);
+				Info(tag + $"DRY RUN: cheapest key {money(ask)}; with the current balance about {count} key(s) would be bought (price checked again for every key).");
 
 				break;
 			}
 
 			long before = Bot.WalletBalance;
-			(bool ok, string message) = await BuyOneKeyAsync(listing, wallet, ct).ConfigureAwait(false);
+			(bool ok, string message) = await BuyOneKeyAsync(ask, wallet, before, ct).ConfigureAwait(false);
 
 			if (!ok) {
 				// Do not retry blindly: a wrong guess here would cost money.
@@ -98,29 +93,10 @@ internal sealed partial class SellerRunner {
 				break;
 			}
 
-			// Steam's balance update is the ground truth that the key was really paid.
-			bool paid = false;
-
-			for (int i = 0; i < 15; i++) {
-				if (Bot.WalletBalance < before) {
-					paid = true;
-
-					break;
-				}
-
-				await Task.Delay(1000, ct).ConfigureAwait(false);
-			}
-
-			if (!paid) {
-				Warn(tag + "Steam reported success but the wallet balance did not change yet. Stopping to be safe; check the market history.");
-
-				break;
-			}
-
 			bought++;
 			spent += before - Bot.WalletBalance;
 			balance = Bot.WalletBalance;
-			Info(tag + $"BOUGHT [{bought}] Mann Co. Supply Crate Key for {money(before - balance)}. Wallet now {money(balance)}.");
+			Info(tag + $"BOUGHT [{bought}] {KeyName} for {money(before - balance)}. Wallet now {money(balance)}.");
 
 			await Task.Delay(2000, ct).ConfigureAwait(false);
 		}
@@ -134,114 +110,96 @@ internal sealed partial class SellerRunner {
 		return "";
 	}
 
-	private async Task<KeyListing?> GetCheapestKeyAsync(WalletInfo wallet, CancellationToken ct) {
-		Uri url = new(ArchiWebHandler.SteamCommunityURL, $"/market/listings/{KeyAppID}/{Uri.EscapeDataString(KeyName)}/render/?query=&start=0&count=10&country={Uri.EscapeDataString(wallet.Country)}&language=english&currency={wallet.CurrencyId}");
+	// Lowest sell price of the key (what a buyer pays, in minor units), or 0 if it could not be read.
+	private async Task<long> GetKeyAskAsync(WalletInfo wallet, CancellationToken ct) {
+		string qp = JsonSerializer.Serialize(new object[] { KeyAppID, KeyName });
+		Uri url = new(ArchiWebHandler.SteamCommunityURL, $"/market/orderbook?q=Load&qp={Uri.EscapeDataString(qp)}&cc={Uri.EscapeDataString(wallet.Country)}&l=english&currency={wallet.CurrencyId}");
+		KeyValuePair<string, string>[] headers = [new("x-valve-request-type", "queryAction")];
 
-		ObjectResponse<JsonElement>? response = await Bot.ArchiWebHandler.UrlGetToJsonObjectWithSession<JsonElement>(url, referer: KeyPage, requestOptions: KeepErrors, maxTries: 2, cancellationToken: ct).ConfigureAwait(false);
+		for (int attempt = 1; attempt <= 3; attempt++) {
+			ct.ThrowIfCancellationRequested();
 
-		if (response == null) {
-			return null;
-		}
+			ObjectResponse<JsonElement>? response = await Bot.ArchiWebHandler.UrlGetToJsonObjectWithSession<JsonElement>(url, headers, KeyPage, KeepErrors, cancellationToken: ct).ConfigureAwait(false);
 
-		if (response.StatusCode == HttpStatusCode.TooManyRequests) {
-			Warn("TF2 keys: Steam rate limit reached, waiting 30 s...");
-			await Task.Delay(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
+			if (response == null) {
+				await Task.Delay(TimeSpan.FromSeconds(5 * attempt), ct).ConfigureAwait(false);
 
-			return null;
-		}
-
-		JsonElement root = response.Content;
-
-		if ((root.ValueKind != JsonValueKind.Object) || !root.TryGetProperty("listinginfo", out JsonElement info) || (info.ValueKind != JsonValueKind.Object)) {
-			Warn($"TF2 keys: unexpected listing reply (HTTP {(int) response.StatusCode}): {root.ToString()[..Math.Min(200, root.ToString().Length)]}");
-
-			return null;
-		}
-
-		return PickCheapest(info, wallet.CurrencyId);
-	}
-
-	private static KeyListing? PickCheapest(JsonElement info, int currencyId) {
-		long walletCurrencyId = 2000 + currencyId;
-		KeyListing? best = null;
-
-		foreach (JsonProperty entry in info.EnumerateObject()) {
-			JsonElement l = entry.Value;
-
-			if (l.ValueKind != JsonValueKind.Object) {
 				continue;
 			}
 
-			long subtotal, fee;
+			if (response.StatusCode == HttpStatusCode.TooManyRequests) {
+				Warn("TF2 keys: Steam rate limit reached, waiting 30 s...");
+				await Task.Delay(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
 
-			if (l.TryGetProperty("converted_price", out _) && ((long) ReadNumber(l, "converted_currencyid", walletCurrencyId) == walletCurrencyId)) {
-				subtotal = (long) ReadNumber(l, "converted_price", 0);
-				fee = (long) ReadNumber(l, "converted_fee", 0);
-			} else if ((long) ReadNumber(l, "currencyid", 0) == walletCurrencyId) {
-				subtotal = (long) ReadNumber(l, "price", 0);
-				fee = (long) ReadNumber(l, "fee", 0) + (long) ReadNumber(l, "publisher_fee", 0);
-			} else {
 				continue;
 			}
 
-			if ((subtotal <= 0) || (fee <= 0)) {
-				continue;
+			long ask = ParseLowestAsk(response.Content);
+
+			if (ask <= 0) {
+				string raw = response.Content.ToString();
+				Warn($"TF2 keys: unexpected price reply (HTTP {(int) response.StatusCode}): {(raw.Length > 200 ? raw[..200] + "..." : raw)}");
 			}
 
-			string id = l.TryGetProperty("listingid", out JsonElement idElement) && (idElement.ValueKind == JsonValueKind.String) ? idElement.GetString() ?? entry.Name : entry.Name;
-			KeyListing candidate = new(id, subtotal, fee);
+			return ask;
+		}
 
-			if ((best == null) || (candidate.Total < best.Total)) {
-				best = candidate;
+		return 0;
+	}
+
+	private static long ParseLowestAsk(JsonElement root) {
+		JsonElement data = root;
+
+		for (int i = 0; i < 2; i++) {
+			if ((data.ValueKind == JsonValueKind.Object) && data.TryGetProperty("data", out JsonElement inner) && (inner.ValueKind == JsonValueKind.Object)) {
+				data = inner;
 			}
 		}
 
-		return best;
+		if (data.ValueKind != JsonValueKind.Object) {
+			return 0;
+		}
+
+		long best = 0;
+
+		if (data.TryGetProperty("rgCompactSellOrders", out JsonElement array) && (array.ValueKind == JsonValueKind.Array)) {
+			int index = 0;
+
+			foreach (JsonElement item in array.EnumerateArray()) {
+				// Flat list: price, quantity, price, quantity, ...
+				if ((index++ % 2) != 0) {
+					continue;
+				}
+
+				long price = item.ValueKind == JsonValueKind.Number ? item.GetInt64() : (item.ValueKind == JsonValueKind.String) && long.TryParse(item.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed) ? parsed : 0;
+
+				if ((price > 0) && ((best == 0) || (price < best))) {
+					best = price;
+				}
+			}
+		}
+
+		return best > 0 ? best : (long) ReadNumber(data, "amtMinSellOrder", 0);
 	}
 
-	private async Task<(bool Success, string Message)> BuyOneKeyAsync(KeyListing listing, WalletInfo wallet, CancellationToken ct) {
-		(bool ok, string? confirmationId, string raw) = await PostBuyAsync(listing, wallet, null, ct).ConfigureAwait(false);
-
-		if (ok) {
-			return (true, "");
-		}
-
-		if (confirmationId == null) {
-			return (false, "Steam's reply: " + raw);
-		}
-
-		// Steam asks for a mobile confirmation of the purchase first.
-		if (!Config.AutoConfirm) {
-			return (false, "The purchase needs a mobile confirmation, but AutoConfirm is off.");
-		}
-
-		await ConfirmAsync(EMobileConfirmationType.MarketPurchase).ConfigureAwait(false);
-		await Task.Delay(3000, ct).ConfigureAwait(false);
-
-		(ok, _, raw) = await PostBuyAsync(listing, wallet, confirmationId, ct).ConfigureAwait(false);
-
-		return ok ? (true, "") : (false, "Steam's reply after confirming: " + raw);
-	}
-
-	private async Task<(bool Success, string? ConfirmationID, string Raw)> PostBuyAsync(KeyListing listing, WalletInfo wallet, string? confirmationId, CancellationToken ct) {
+	private async Task<(bool Success, string Message)> BuyOneKeyAsync(long price, WalletInfo wallet, long balanceBefore, CancellationToken ct) {
 		IDictionary<string, string> data = new Dictionary<string, string> {
 			["currency"] = wallet.CurrencyId.ToString(CultureInfo.InvariantCulture),
-			["subtotal"] = listing.Subtotal.ToString(CultureInfo.InvariantCulture),
-			["fee"] = listing.Fee.ToString(CultureInfo.InvariantCulture),
-			["total"] = listing.Total.ToString(CultureInfo.InvariantCulture),
+			["appid"] = KeyAppID.ToString(CultureInfo.InvariantCulture),
+			["market_hash_name"] = KeyName,
+			["price_total"] = price.ToString(CultureInfo.InvariantCulture),
 			["quantity"] = "1",
 			["billing_state"] = "",
-			["save_my_address"] = "0",
-			["confirmation"] = confirmationId ?? "0"
+			["save_my_address"] = "0"
 		};
 
-		Uri url = new(ArchiWebHandler.SteamCommunityURL, $"/market/buylisting/{listing.ListingID}");
+		Uri url = new(ArchiWebHandler.SteamCommunityURL, "/market/createbuyorder/");
 
-		// maxTries: 1 on purpose, a blind retry of a purchase could buy twice.
+		// maxTries: 1 on purpose, a blind retry could buy twice.
 		ObjectResponse<JsonElement>? response = await Bot.ArchiWebHandler.UrlPostToJsonObjectWithSession<JsonElement>(url, data: data, referer: KeyPage, requestOptions: KeepErrors, maxTries: 1, cancellationToken: ct).ConfigureAwait(false);
 
 		if (response == null) {
-			return (false, null, "no response from Steam");
+			return (false, "no response from Steam");
 		}
 
 		JsonElement root = response.Content;
@@ -251,22 +209,50 @@ internal sealed partial class SellerRunner {
 			raw = raw[..300];
 		}
 
-		if (root.ValueKind != JsonValueKind.Object) {
-			return (false, null, raw);
+		if ((root.ValueKind != JsonValueKind.Object) || (ReadNumber(root, "success", 0) != 1)) {
+			return (false, "Steam's reply: " + raw);
 		}
 
-		JsonElement scope = root.TryGetProperty("data", out JsonElement d) && (d.ValueKind == JsonValueKind.Object) ? d : root;
+		string? orderId = null;
 
-		if (scope.TryGetProperty("confirmation", out JsonElement c) && (c.ValueKind == JsonValueKind.Object) && c.TryGetProperty("confirmation_id", out JsonElement id)) {
-			string? text = id.ValueKind == JsonValueKind.String ? id.GetString() : id.ToString();
+		if (root.TryGetProperty("buy_orderid", out JsonElement id)) {
+			orderId = id.ValueKind == JsonValueKind.String ? id.GetString() : id.ToString();
+		}
 
-			if (!string.IsNullOrEmpty(text) && (confirmationId == null)) {
-				return (false, text, raw);
+		// The order is placed exactly at the lowest sell price, so it should fill at once. The wallet balance is the proof.
+		if (await WaitForPaymentAsync(balanceBefore, 12, ct).ConfigureAwait(false)) {
+			return (true, "");
+		}
+
+		// Some accounts need the purchase confirmed in the mobile app.
+		if (Config.AutoConfirm) {
+			await ConfirmAsync(EMobileConfirmationType.MarketPurchase).ConfigureAwait(false);
+
+			if (await WaitForPaymentAsync(balanceBefore, 12, ct).ConfigureAwait(false)) {
+				return (true, "");
 			}
 		}
 
-		bool success = (ReadNumber(root, "success", 0) == 1) || (root.TryGetProperty("wallet_info", out JsonElement w) && (w.ValueKind == JsonValueKind.Object) && (ReadNumber(w, "success", 0) == 1));
+		// Not filled (for example the price moved up in the meantime): do not leave an open order behind.
+		if (!string.IsNullOrEmpty(orderId)) {
+			IDictionary<string, string> cancel = new Dictionary<string, string> { ["buy_orderid"] = orderId };
+			await Bot.ArchiWebHandler.UrlPostToJsonObjectWithSession<JsonElement>(new Uri(ArchiWebHandler.SteamCommunityURL, "/market/cancelbuyorder/"), data: cancel, referer: KeyPage, requestOptions: KeepErrors, maxTries: 1, cancellationToken: ct).ConfigureAwait(false);
 
-		return (success, null, raw);
+			return (false, $"The buy order (id {orderId}) was accepted but the wallet balance did not drop, so it was cancelled. Steam's reply: {raw}");
+		}
+
+		return (false, "The buy order was accepted but the wallet balance did not drop. Check your market history. Steam's reply: " + raw);
+	}
+
+	private async Task<bool> WaitForPaymentAsync(long balanceBefore, int seconds, CancellationToken ct) {
+		for (int i = 0; i < seconds; i++) {
+			if (Bot.WalletBalance < balanceBefore) {
+				return true;
+			}
+
+			await Task.Delay(1000, ct).ConfigureAwait(false);
+		}
+
+		return Bot.WalletBalance < balanceBefore;
 	}
 }
