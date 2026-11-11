@@ -287,8 +287,17 @@ internal sealed partial class SellerRunner : IDisposable {
 		foreach (Group group in dryRun ? groups.Values.ToList() : new List<Group>()) {
 			ct.ThrowIfCancellationRequested();
 
-			List<(long Price, long Quantity)>? book = await GetBookAsync(group.Name, wallet, ct).ConfigureAwait(false);
+			BookResult? result = await GetBookAsync(group.Name, wallet, ct).ConfigureAwait(false);
+			List<(long Price, long Quantity)>? book = result?.Levels;
 			priced++;
+
+			if ((result != null) && IsCheap(result, cfg)) {
+				group.Skip = "cheap";
+				NoSale[group.Name] = DateTime.UtcNow.AddHours(24);
+				Info($"[{priced}/{groups.Count}] {group.Name}: market price {Money(result.Ask)}, ignored (IgnoreMarketPriceUpTo).");
+
+				continue;
+			}
 
 			if (book == null) {
 				group.Skip = "could not read buy orders";
@@ -357,7 +366,15 @@ internal sealed partial class SellerRunner : IDisposable {
 
 			ct.ThrowIfCancellationRequested();
 
-			List<(long Price, long Quantity)>? book = await GetBookAsync(group.Name, wallet, ct).ConfigureAwait(false);
+			BookResult? result = await GetBookAsync(group.Name, wallet, ct).ConfigureAwait(false);
+			List<(long Price, long Quantity)>? book = result?.Levels;
+
+			if ((result != null) && IsCheap(result, cfg)) {
+				NoSale[group.Name] = DateTime.UtcNow.AddHours(24);
+				Info($"[{position}/{toSell.Count}] {group.Name}: market price {Money(result.Ask)}, ignored (IgnoreMarketPriceUpTo).");
+
+				continue;
+			}
 
 			if (book == null) {
 				Warn($"[{position}/{toSell.Count}] {group.Name}: could not read buy orders, skipped.");
@@ -489,7 +506,12 @@ internal sealed partial class SellerRunner : IDisposable {
 	}
 
 	// Returns the buy-order levels (highest price first), an empty list if there are none, or null if the request failed.
-	private async Task<List<(long Price, long Quantity)>?> GetBookAsync(string marketHashName, WalletInfo wallet, CancellationToken ct) {
+	private sealed record BookResult(List<(long Price, long Quantity)> Levels, long Ask);
+
+	// Cheap junk: the lowest market price is at or below IgnoreMarketPriceUpTo.
+	private static bool IsCheap(BookResult result, SellerConfig cfg) => (cfg.IgnoreMarketPriceUpTo > 0) && (result.Ask > 0) && (result.Ask <= (long) Math.Round(cfg.IgnoreMarketPriceUpTo * 100m));
+
+	private async Task<BookResult?> GetBookAsync(string marketHashName, WalletInfo wallet, CancellationToken ct) {
 		string qp = JsonSerializer.Serialize(new object[] { AppID, marketHashName });
 		Uri url = new(ArchiWebHandler.SteamCommunityURL, $"/market/orderbook?q=Load&qp={Uri.EscapeDataString(qp)}&cc={Uri.EscapeDataString(wallet.Country)}&l=english&currency={wallet.CurrencyId}");
 		Uri referer = new(ArchiWebHandler.SteamCommunityURL, $"/market/listings/{AppID}/{Uri.EscapeDataString(marketHashName)}");
@@ -530,7 +552,7 @@ internal sealed partial class SellerRunner : IDisposable {
 				Warn($"Unexpected buy-order reply for {marketHashName}: {(raw.Length > 200 ? raw[..200] + "..." : raw)}");
 			}
 
-			return book;
+			return book == null ? null : new BookResult(book, ParseLowestAsk(response.Content));
 		}
 
 		return null;

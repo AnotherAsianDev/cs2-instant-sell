@@ -20,6 +20,10 @@ internal sealed class SellerConfig {
 	// Items whose top buy order is below this price ignore the drop limit above.
 	public decimal NoDropLimitBelow { get; init; } = 0.50m;
 
+	// Items whose lowest market price is this or less (wallet currency, e.g. 0.03 CHF = the market minimum) are ignored:
+	// they practically never have buy orders. Checked on the order-book request that is made anyway, then remembered for 24 h. 0 = off.
+	public decimal IgnoreMarketPriceUpTo { get; init; } = 0.03m;
+
 	// Let ASF's own 2FA accept the market confirmations (needs the bot to have ASF 2FA imported).
 	public bool AutoConfirm { get; init; } = true;
 
