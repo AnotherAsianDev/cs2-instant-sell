@@ -76,7 +76,7 @@ With `BuyTf2Keys: true` and `Tf2KeyMaxPrice` set, every real run (command or sch
 - the current lowest price is at most `Tf2KeyMaxPrice`,
 - `Tf2KeyMaxPerRun` (if set) is not reached.
 
-How a key is bought: the price is read from the market order book, then a buy order is placed at exactly the lowest sell price, which Steam fills immediately. The plugin then checks that the wallet balance really dropped. If it did not (for example the price moved), it tries the mobile confirmation (if `AutoConfirm` is on), and otherwise cancels the order and stops. It never retries a purchase blindly. The keys land in the bot's TF2 inventory. `!isell <bot>` (dry run) also shows the current key price and how many keys the current balance would buy, without buying.
+How a key is bought: the price is read from the market order book, then a buy order is placed at exactly the lowest sell price, which Steam fills immediately. Steam asks for a mobile confirmation of each purchase: the plugin accepts it with ASF 2FA (`AutoConfirm` must be on) and sends the order again with the confirmation. It then checks that the wallet balance really dropped. If it did not (for example the price moved), it cancels the order and stops. It never retries a purchase blindly. The keys land in the bot's TF2 inventory. `!isell <bot>` (dry run) also shows the current key price and how many keys the current balance would buy, without buying.
 
 Notes:
 
