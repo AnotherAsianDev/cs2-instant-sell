@@ -32,6 +32,7 @@ internal sealed partial class SellerRunner : IDisposable {
 
 	private CancellationTokenSource? Cts;
 	private Timer? AutoTimer;
+	private Timer? HoursTimer;
 
 	internal SellerConfig Config { get; private set; } = new();
 	internal string Status { get; private set; } = "idle";
@@ -41,6 +42,7 @@ internal sealed partial class SellerRunner : IDisposable {
 
 	public void Dispose() {
 		AutoTimer?.Dispose();
+		HoursTimer?.Dispose();
 		Cts?.Cancel();
 		Cts?.Dispose();
 		Gate.Dispose();
@@ -54,36 +56,56 @@ internal sealed partial class SellerRunner : IDisposable {
 
 		AutoTimer?.Dispose();
 		AutoTimer = null;
+		HoursTimer?.Dispose();
+		HoursTimer = null;
 
 		List<TimeSpan> times = [];
 
 		foreach (string text in config.AutoRunTimes) {
-			if (TimeSpan.TryParseExact(text?.Trim(), @"h\:mm", System.Globalization.CultureInfo.InvariantCulture, out TimeSpan t) && (t >= TimeSpan.Zero) && (t < TimeSpan.FromHours(24))) {
+			if (TimeSpan.TryParseExact(text?.Trim(), @"h\:mm", CultureInfo.InvariantCulture, out TimeSpan t) && (t >= TimeSpan.Zero) && (t < TimeSpan.FromHours(24))) {
 				times.Add(t);
 			} else {
 				Warn($"Ignoring invalid AutoRunTimes entry \"{text}\" (use 24h format like \"04:00\").");
 			}
 		}
 
-		if (config.Enabled && (times.Count > 0)) {
+		if (!config.Enabled) {
+			Info("Disabled in this bot's config.");
+
+			return;
+		}
+
+		List<string> schedule = [];
+
+		if (times.Count > 0) {
 			times.Sort();
 			ScheduleNext(times);
-			Info($"Enabled. Automatic real selling daily at {string.Join(", ", times.Select(t => t.ToString(@"hh\:mm")))} (local time). Next run: {NextRun(times):yyyy-MM-dd HH:mm}.");
-		} else if (config.Enabled && (config.AutoRunHours > 0)) {
-			TimeSpan period = TimeSpan.FromHours(config.AutoRunHours);
+			schedule.Add($"daily at {string.Join(", ", times.Select(t => t.ToString(@"hh\:mm")))} (local time, next: {NextRun(times):yyyy-MM-dd HH:mm})");
+		}
 
-			// First automatic run 10 minutes after the config is loaded, to give the bot time to log in.
-			AutoTimer = new Timer(_ => {
-					if (!TryStart(false, "automatic run")) {
-						Info("Automatic run skipped (a run is already in progress).");
+		if (config.AutoRunHours > 0) {
+			int hours = Math.Max(1, config.AutoRunHours);
+
+			if (hours != config.AutoRunHours) {
+				Warn("AutoRunHours was raised to the minimum of 1.");
+			}
+
+			TimeSpan period = TimeSpan.FromHours(hours);
+
+			// First run 10 minutes after the config is loaded, to give the bot time to log in.
+			HoursTimer = new Timer(_ => {
+					if (!TryStart(false, "scheduled run (every " + hours + " h)")) {
+						Info("Scheduled run skipped (a run is already in progress).");
 					}
 				}, null, TimeSpan.FromMinutes(10), period
 			);
 
-			Info($"Enabled. Automatic real selling every {config.AutoRunHours} h (first run in 10 min).");
-		} else {
-			Info(config.Enabled ? "Enabled. Sells only when you use the ISELLGO command." : "Disabled in this bot's config.");
+			schedule.Add($"every {hours} h (first run in 10 min)");
 		}
+
+		string keys = config.BuyTf2Keys ? (config.Tf2KeyMaxPrice > 0 ? $" TF2 key buying is ON (max {config.Tf2KeyMaxPrice:0.00} per key, {(config.Tf2KeyMaxPerRun > 0 ? $"up to {config.Tf2KeyMaxPerRun} per run" : "as many as the balance allows")}, keeping {config.Tf2KeyKeepBalance:0.00} in the wallet)." : " BuyTf2Keys is on but Tf2KeyMaxPrice is not set, so no keys will be bought.") : "";
+
+		Info(schedule.Count > 0 ? $"Enabled. Automatic real selling: {string.Join(" and ", schedule)}.{keys}" : $"Enabled. Sells only when you use the ISELLGO command.{keys}");
 	}
 
 	private static DateTime NextRun(List<TimeSpan> times) {
@@ -293,6 +315,8 @@ internal sealed partial class SellerRunner : IDisposable {
 		if (dryRun) {
 			Status = "idle";
 			LastSummary = $"dry run: {totalItems} items, about {Money(totalMoney)}";
+			await BuyKeysAsync(true, wallet, Money, ct).ConfigureAwait(false);
+
 			Info("=== DRY RUN finished. Use ISELLGO to sell for real. ===");
 
 			return;
@@ -369,15 +393,17 @@ internal sealed partial class SellerRunner : IDisposable {
 			Warn("AutoConfirm is off: confirm the listings in the Steam mobile app (or use the 2FAOK command).");
 		}
 
+		string keyNote = await BuyKeysAsync(false, wallet, Money, ct).ConfigureAwait(false);
+
 		Status = "idle";
-		LastSummary = $"{sold} listed, {failed} failed, about {Money(earned)}";
+		LastSummary = $"{sold} listed, {failed} failed, about {Money(earned)}{keyNote}";
 		Info($"=== REAL SELL finished: {LastSummary} ===");
 	}
 
-	private async Task ConfirmAsync() {
-		Info("Accepting market confirmations with ASF 2FA...");
+	private async Task ConfirmAsync(EMobileConfirmationType type = EMobileConfirmationType.MarketListing) {
+		Info($"Accepting {type} confirmations with ASF 2FA...");
 
-		(bool success, _, string message) = await Bot.Actions.HandleTwoFactorAuthenticationConfirmations(true, EMobileConfirmationType.MarketListing, null, true).ConfigureAwait(false);
+		(bool success, _, string message) = await Bot.Actions.HandleTwoFactorAuthenticationConfirmations(true, type, null, true).ConfigureAwait(false);
 
 		if (success) {
 			Info("Confirmations: " + message);
