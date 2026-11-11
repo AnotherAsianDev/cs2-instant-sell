@@ -20,7 +20,7 @@ internal sealed partial class SellerRunner {
 	private Uri KeyPage => new(ArchiWebHandler.SteamCommunityURL, $"/market/listings/{KeyAppID}/{Uri.EscapeDataString(KeyName)}");
 
 	// Returns a short text for the run summary ("" if nothing was bought or the feature is off).
-	private async Task<string> BuyKeysAsync(bool dryRun, WalletInfo wallet, Func<long, string> money, CancellationToken ct) {
+	private async Task<string> BuyKeysAsync(bool dryRun, bool waitForSales, WalletInfo wallet, Func<long, string> money, CancellationToken ct) {
 		SellerConfig cfg = Config;
 
 		if (!cfg.BuyTf2Keys) {
@@ -40,7 +40,7 @@ internal sealed partial class SellerRunner {
 		int maxKeys = cfg.Tf2KeyMaxPerRun > 0 ? cfg.Tf2KeyMaxPerRun : int.MaxValue;
 		string maxKeysText = cfg.Tf2KeyMaxPerRun > 0 ? $"at most {cfg.Tf2KeyMaxPerRun} keys" : "no cap on the number of keys";
 
-		if (!dryRun) {
+		if (!dryRun && waitForSales) {
 			// Give Steam a moment to credit the money of the sales that just filled.
 			await Task.Delay(TimeSpan.FromSeconds(10), ct).ConfigureAwait(false);
 		}

@@ -353,7 +353,7 @@ internal sealed partial class SellerRunner : IDisposable {
 		if (dryRun) {
 			Status = "idle";
 			LastSummary = $"dry run: {totalItems} items, about {Money(totalMoney)}";
-			await BuyKeysAsync(true, wallet, Money, ct).ConfigureAwait(false);
+			await BuyKeysAsync(true, false, wallet, Money, ct).ConfigureAwait(false);
 
 			Info("=== DRY RUN finished. Use ISELLGO to sell for real. ===");
 
@@ -447,7 +447,7 @@ internal sealed partial class SellerRunner : IDisposable {
 			Warn("AutoConfirm is off: confirm the listings in the Steam mobile app (or use the 2FAOK command).");
 		}
 
-		string keyNote = await BuyKeysAsync(false, wallet, Money, ct).ConfigureAwait(false);
+		string keyNote = await BuyKeysAsync(false, sold > 0, wallet, Money, ct).ConfigureAwait(false);
 
 		Status = "idle";
 		LastSummary = $"{sold} listed, {failed} failed, about {Money(earned)}{keyNote}";
