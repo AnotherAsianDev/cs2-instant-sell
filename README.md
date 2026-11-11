@@ -19,9 +19,9 @@ Documentation:
 
 **Browser extension**
 
-1. Download `CS2InstantSell-extension.zip` from the [latest release](../../releases/latest) and unzip it (or use the [`extension/`](extension) folder of this repo).
+1. Download this repository (green **Code** button → **Download ZIP**) and unzip it. The extension is the [`extension/`](extension) folder.
 2. Open `brave://extensions` (or `chrome://extensions`, `edge://extensions`), turn on *Developer mode*.
-3. *Load unpacked* and select the unzipped folder (the one containing `manifest.json`).
+3. *Load unpacked* and select the `extension` folder (the one containing `manifest.json`).
 4. Open your CS2 inventory on steamcommunity.com and click **⚡ Instant Sell**.
 
 **ASF plugin**
