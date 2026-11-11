@@ -193,23 +193,32 @@ internal sealed partial class SellerRunner {
 			["save_my_address"] = "0"
 		};
 
-		Uri url = new(ArchiWebHandler.SteamCommunityURL, "/market/createbuyorder/");
+		bool confirmedRound = false;
+		(JsonElement root, string raw) = await PostBuyOrderAsync(data, ct).ConfigureAwait(false);
 
-		// maxTries: 1 on purpose, a blind retry could buy twice.
-		ObjectResponse<JsonElement>? response = await Bot.ArchiWebHandler.UrlPostToJsonObjectWithSession<JsonElement>(url, data: data, referer: KeyPage, requestOptions: KeepErrors, maxTries: 1, cancellationToken: ct).ConfigureAwait(false);
+		// Steam first answers with success 22 + a confirmation id: the purchase must be confirmed in the mobile app,
+		// then the same request is sent again together with that id.
+		if ((root.ValueKind == JsonValueKind.Object) && (ReadNumber(root, "success", 0) == 22) && root.TryGetProperty("confirmation", out JsonElement conf) && (conf.ValueKind == JsonValueKind.Object) && conf.TryGetProperty("confirmation_id", out JsonElement confId)) {
+			if (!Config.AutoConfirm) {
+				return (false, "The purchase needs a mobile confirmation, but AutoConfirm is off.");
+			}
 
-		if (response == null) {
-			return (false, "no response from Steam");
-		}
+			string? confirmationId = confId.ValueKind == JsonValueKind.String ? confId.GetString() : confId.ToString();
 
-		JsonElement root = response.Content;
-		string raw = root.ValueKind == JsonValueKind.Undefined ? $"HTTP {(int) response.StatusCode}" : root.ToString();
+			await ConfirmAsync(EMobileConfirmationType.MarketPurchase).ConfigureAwait(false);
+			await Task.Delay(3000, ct).ConfigureAwait(false);
 
-		if (raw.Length > 300) {
-			raw = raw[..300];
+			data["confirmation"] = confirmationId ?? "0";
+			confirmedRound = true;
+			(root, raw) = await PostBuyOrderAsync(data, ct).ConfigureAwait(false);
 		}
 
 		if ((root.ValueKind != JsonValueKind.Object) || (ReadNumber(root, "success", 0) != 1)) {
+			// After a confirmation Steam's reply code is not reliable, so the wallet balance decides.
+			if (confirmedRound && await WaitForPaymentAsync(balanceBefore, 12, ct).ConfigureAwait(false)) {
+				return (true, "");
+			}
+
 			return (false, "Steam's reply: " + raw);
 		}
 
@@ -242,6 +251,22 @@ internal sealed partial class SellerRunner {
 		}
 
 		return (false, "The buy order was accepted but the wallet balance did not drop. Check your market history. Steam's reply: " + raw);
+	}
+
+	private async Task<(JsonElement Root, string Raw)> PostBuyOrderAsync(IDictionary<string, string> data, CancellationToken ct) {
+		Uri url = new(ArchiWebHandler.SteamCommunityURL, "/market/createbuyorder/");
+
+		// maxTries: 1 on purpose, a blind retry could buy twice.
+		ObjectResponse<JsonElement>? response = await Bot.ArchiWebHandler.UrlPostToJsonObjectWithSession<JsonElement>(url, data: data, referer: KeyPage, requestOptions: KeepErrors, maxTries: 1, cancellationToken: ct).ConfigureAwait(false);
+
+		if (response == null) {
+			return (default, "no response from Steam");
+		}
+
+		JsonElement root = response.Content;
+		string raw = root.ValueKind == JsonValueKind.Undefined ? $"HTTP {(int) response.StatusCode}" : root.ToString();
+
+		return (root, raw.Length > 300 ? raw[..300] : raw);
 	}
 
 	private async Task<bool> WaitForPaymentAsync(long balanceBefore, int seconds, CancellationToken ct) {
