@@ -115,6 +115,13 @@ The commands answer immediately ("started"). The work runs in the background and
 
 During a real run: `SOLD [n] <item> for <price>`, `FAILED <item>: <reason>`, `buy orders changed, only X of Y can still sell instantly`, and the confirmation result.
 
+## How many requests it makes
+
+- Per run: 1 inventory request (per 2000 items), 1 market page request for the wallet settings, then **one buy-order request per different item** (not per copy), plus **one listing request per sold item** (1.5 s apart).
+- A real run prices and sells item by item, so each item costs one buy-order request, not two. The dry run (`!isell`) prices everything first to show the plan.
+- Items with no usable buy order are remembered for 3 hours and skipped without any request by real runs. A dry run always checks them again.
+- Key buying adds one listing request per key bought (plus one more for the final check).
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
