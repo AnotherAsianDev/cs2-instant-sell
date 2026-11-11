@@ -30,6 +30,10 @@ internal sealed partial class SellerRunner : IDisposable {
 	// Asset IDs that Steam refused to list (usually trade-locked), so later runs don't retry them right away.
 	private readonly Dictionary<ulong, DateTime> Rejected = [];
 
+	// Items that had no usable buy order recently. Real runs skip them for a few hours, which saves a request per item.
+	private const int NoSaleHours = 3;
+	private readonly Dictionary<string, DateTime> NoSale = new(StringComparer.Ordinal);
+
 	private CancellationTokenSource? Cts;
 	private Timer? AutoTimer;
 	private Timer? HoursTimer;
@@ -232,7 +236,11 @@ internal sealed partial class SellerRunner : IDisposable {
 			Rejected.Remove(expired);
 		}
 
-		int notMarketable = 0, kept = 0, rejected = 0;
+		foreach (string expiredName in NoSale.Where(x => x.Value < now).Select(x => x.Key).ToList()) {
+			NoSale.Remove(expiredName);
+		}
+
+		int notMarketable = 0, kept = 0, rejected = 0, cachedNoSale = 0;
 		Dictionary<string, Group> groups = new(StringComparer.Ordinal);
 
 		foreach (Asset asset in assets) {
@@ -256,6 +264,13 @@ internal sealed partial class SellerRunner : IDisposable {
 				continue;
 			}
 
+			// Real runs skip items that had no instant sale a short while ago. A dry run always checks again and refreshes this list.
+			if (!dryRun && NoSale.ContainsKey(name)) {
+				cachedNoSale++;
+
+				continue;
+			}
+
 			if (!groups.TryGetValue(name, out Group? group)) {
 				group = new Group { Name = name, AssetIDs = [] };
 				groups[name] = group;
@@ -264,12 +279,12 @@ internal sealed partial class SellerRunner : IDisposable {
 			group.AssetIDs.Add(asset.AssetID);
 		}
 
-		Info($"Inventory: {assets.Count} items. Skipped: {notMarketable} not marketable/tradable, {kept} on your Keep list, {rejected} recently refused by Steam. {groups.Count} different items to price.");
+		Info($"Inventory: {assets.Count} items. Skipped: {notMarketable} not marketable/tradable, {kept} on your Keep list, {rejected} recently refused by Steam, {cachedNoSale} without instant sale in the last {NoSaleHours} h. {groups.Count} different items to check.");
 
-		// Phase 1: price everything.
+		// Dry run: price everything first and show the plan. A real run prices and sells item by item (one request per item instead of two).
 		int priced = 0;
 
-		foreach (Group group in groups.Values) {
+		foreach (Group group in dryRun ? groups.Values.ToList() : new List<Group>()) {
 			ct.ThrowIfCancellationRequested();
 
 			List<(long Price, long Quantity)>? book = await GetBookAsync(group.Name, wallet, ct).ConfigureAwait(false);
@@ -284,6 +299,7 @@ internal sealed partial class SellerRunner : IDisposable {
 
 			if (book.Count == 0) {
 				group.Skip = "no buy orders";
+				NoSale[group.Name] = DateTime.UtcNow.AddHours(NoSaleHours);
 				Info($"[{priced}/{groups.Count}] {group.Name}: no buy orders, skipped.");
 
 				continue;
@@ -293,6 +309,7 @@ internal sealed partial class SellerRunner : IDisposable {
 
 			if (group.Plan.Count == 0) {
 				group.Skip = "payout too low";
+				NoSale[group.Name] = DateTime.UtcNow.AddHours(NoSaleHours);
 				Info($"[{priced}/{groups.Count}] {group.Name}: top bid {Money(book[0].Price)} is too low or too far down, skipped.");
 
 				continue;
@@ -302,15 +319,17 @@ internal sealed partial class SellerRunner : IDisposable {
 			Info($"[{priced}/{groups.Count}] {group.Name}: {group.Plan.Count}/{group.AssetIDs.Count} sellable now, you get about {Money(sum)} (first {Money(group.Plan[0].SellerReceives)} each).");
 		}
 
-		List<Group> toSell = groups.Values.Where(g => g.Plan.Count > 0).ToList();
+		List<Group> toSell = dryRun ? groups.Values.Where(g => g.Plan.Count > 0).ToList() : groups.Values.ToList();
 		int totalItems = toSell.Sum(g => g.Plan.Count);
 		long totalMoney = toSell.Sum(g => g.Plan.Sum(u => u.SellerReceives));
 
-		if (cfg.MaxItemsPerRun > 0 && totalItems > cfg.MaxItemsPerRun) {
+		if (dryRun && cfg.MaxItemsPerRun > 0 && totalItems > cfg.MaxItemsPerRun) {
 			Info($"Note: MaxItemsPerRun is {cfg.MaxItemsPerRun}, only that many will be sold in this run.");
 		}
 
-		Info($"Plan: {totalItems} items from {toSell.Count} different items for about {Money(totalMoney)} (after Steam fees).");
+		if (dryRun) {
+			Info($"Plan: {totalItems} items from {toSell.Count} different items for about {Money(totalMoney)} (after Steam fees).");
+		}
 
 		if (dryRun) {
 			Status = "idle";
@@ -327,7 +346,11 @@ internal sealed partial class SellerRunner : IDisposable {
 		long earned = 0;
 		int pendingConfirm = 0;
 
+		int position = 0;
+
 		foreach (Group group in toSell) {
+			position++;
+
 			if (budget <= 0) {
 				break;
 			}
@@ -337,16 +360,21 @@ internal sealed partial class SellerRunner : IDisposable {
 			List<(long Price, long Quantity)>? book = await GetBookAsync(group.Name, wallet, ct).ConfigureAwait(false);
 
 			if (book == null) {
-				Warn($"{group.Name}: could not re-check buy orders, skipped.");
+				Warn($"[{position}/{toSell.Count}] {group.Name}: could not read buy orders, skipped.");
 
 				continue;
 			}
 
-			List<SaleUnit> units = Pricing.Plan(book, group.Plan.Count, cfg.MaxDropPercent, minPayout, noDropBelow, wallet.Fee);
+			List<SaleUnit> units = Pricing.Plan(book, group.AssetIDs.Count, cfg.MaxDropPercent, minPayout, noDropBelow, wallet.Fee);
 
-			if (units.Count < group.Plan.Count) {
-				Warn($"{group.Name}: buy orders changed, only {units.Count} of {group.Plan.Count} can still sell instantly.");
+			if (units.Count == 0) {
+				NoSale[group.Name] = DateTime.UtcNow.AddHours(NoSaleHours);
+				Info($"[{position}/{toSell.Count}] {group.Name}: {(book.Count == 0 ? "no buy orders" : "top bid too low or too far down")}, skipped.");
+
+				continue;
 			}
+
+			Info($"[{position}/{toSell.Count}] {group.Name}: selling {units.Count} of {group.AssetIDs.Count} (first {Money(units[0].SellerReceives)} each).");
 
 			for (int i = 0; i < units.Count; i++) {
 				if (budget <= 0) {
