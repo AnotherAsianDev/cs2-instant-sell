@@ -55,7 +55,7 @@ If you edit bot configs with ASF-ui, check the file afterwards: this plugin has 
 | `MinPayout` | `0.01` | Skip items that would pay out less than this after fees (wallet currency). |
 | `MaxDropPercent` | `20` | Do not sell further down the buy-order list than this many percent below the highest buy order. |
 | `NoDropLimitBelow` | `0.50` | Items whose top buy order is below this price ignore `MaxDropPercent`. |
-| `IgnoreMarketPriceUpTo` | `0.03` | Items whose lowest market price is this or less (wallet currency; 0.03 is the market minimum) are ignored, because they practically never have buy orders. `0` turns it off. |
+| `IgnoreMarketPriceUpTo` | `0.03` | Items whose lowest market price is this or less (wallet currency; 0.03 is the market minimum) are ignored **permanently**, because they practically never have buy orders. `0` turns it off. See "Permanent ignore list". |
 | `AutoConfirm` | `true` | Accept the market confirmations with ASF's 2FA. Needs 2FA imported into ASF for that bot. |
 | `MaxItemsPerRun` | `0` | Safety cap of items sold per run. `0` means no cap. |
 | `Keep` | `[]` | Texts; an item whose market name contains one of them is never sold (case-insensitive). |
@@ -116,11 +116,17 @@ The commands answer immediately ("started"). The work runs in the background and
 
 During a real run: `SOLD [n] <item> for <price>`, `FAILED <item>: <reason>`, `buy orders changed, only X of Y can still sell instantly`, and the confirmation result.
 
+## Permanent ignore list
+
+Items at the market minimum price are added to `config/CS2InstantSell.ignored.txt` (one market name per line, in ASF's config folder, shared by all bots) and are never checked again, also after a restart. The log tells you when an item is added, and the inventory line of each run shows how many items were skipped this way. In Docker the file lives in the mounted `config` folder, so it survives container updates.
+
+To bring an item back, delete its line (or the whole file). `!isell <bot>` (dry run) checks every item again and removes an item from the list by itself if its price is above the limit again.
+
 ## How many requests it makes
 
 - Per run: 1 inventory request (per 2000 items), 1 market page request for the wallet settings, then **one buy-order request per different item** (not per copy), plus **one listing request per sold item** (1.5 s apart).
 - A real run prices and sells item by item, so each item costs one buy-order request, not two. The dry run (`!isell`) prices everything first to show the plan.
-- Items with no usable buy order are remembered for 3 hours and skipped without any request by real runs. Items at the market minimum price (`IgnoreMarketPriceUpTo`) are remembered for 24 hours. A dry run always checks again. The price is read from the same order-book request, so the rule costs nothing extra; each such item needs one request per 24 hours.
+- Items with no usable buy order are remembered for 3 hours and skipped without any request by real runs. Items at the market minimum price (`IgnoreMarketPriceUpTo`) are remembered permanently and never requested again (see below). The price is read from the same order-book request, so the rule costs nothing extra: each such item needs exactly one request, ever.
 - Key buying adds one price request and one buy-order request per key.
 
 ## Troubleshooting

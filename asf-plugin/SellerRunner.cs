@@ -240,7 +240,7 @@ internal sealed partial class SellerRunner : IDisposable {
 			NoSale.Remove(expiredName);
 		}
 
-		int notMarketable = 0, kept = 0, rejected = 0, cachedNoSale = 0;
+		int notMarketable = 0, kept = 0, rejected = 0, cachedNoSale = 0, ignoredCheap = 0;
 		Dictionary<string, Group> groups = new(StringComparer.Ordinal);
 
 		foreach (Asset asset in assets) {
@@ -264,6 +264,13 @@ internal sealed partial class SellerRunner : IDisposable {
 				continue;
 			}
 
+			// Items at the market minimum price are ignored permanently (a dry run checks them again).
+			if (!dryRun && IgnoreList.Contains(name)) {
+				ignoredCheap++;
+
+				continue;
+			}
+
 			// Real runs skip items that had no instant sale a short while ago. A dry run always checks again and refreshes this list.
 			if (!dryRun && NoSale.ContainsKey(name)) {
 				cachedNoSale++;
@@ -279,7 +286,7 @@ internal sealed partial class SellerRunner : IDisposable {
 			group.AssetIDs.Add(asset.AssetID);
 		}
 
-		Info($"Inventory: {assets.Count} items. Skipped: {notMarketable} not marketable/tradable, {kept} on your Keep list, {rejected} recently refused by Steam, {cachedNoSale} without instant sale in the last {NoSaleHours} h. {groups.Count} different items to check.");
+		Info($"Inventory: {assets.Count} items. Skipped: {notMarketable} not marketable/tradable, {kept} on your Keep list, {rejected} recently refused by Steam, {ignoredCheap} permanently ignored as cheap, {cachedNoSale} without instant sale in the last {NoSaleHours} h. {groups.Count} different items to check.");
 
 		// Dry run: price everything first and show the plan. A real run prices and sells item by item (one request per item instead of two).
 		int priced = 0;
@@ -293,10 +300,13 @@ internal sealed partial class SellerRunner : IDisposable {
 
 			if ((result != null) && IsCheap(result, cfg)) {
 				group.Skip = "cheap";
-				NoSale[group.Name] = DateTime.UtcNow.AddHours(24);
-				Info($"[{priced}/{groups.Count}] {group.Name}: market price {Money(result.Ask)}, ignored (IgnoreMarketPriceUpTo).");
+				Info($"[{priced}/{groups.Count}] {group.Name}: market price {Money(result.Ask)}, ignored{(IgnoreList.Add(group.Name) ? $" from now on (added to config/{IgnoreList.FileName})" : "")}.");
 
 				continue;
+			}
+
+			if ((result != null) && IgnoreList.Remove(group.Name)) {
+				Info($"[{priced}/{groups.Count}] {group.Name}: market price {Money(result.Ask)} is above the limit again, removed from the ignore list.");
 			}
 
 			if (book == null) {
@@ -370,8 +380,7 @@ internal sealed partial class SellerRunner : IDisposable {
 			List<(long Price, long Quantity)>? book = result?.Levels;
 
 			if ((result != null) && IsCheap(result, cfg)) {
-				NoSale[group.Name] = DateTime.UtcNow.AddHours(24);
-				Info($"[{position}/{toSell.Count}] {group.Name}: market price {Money(result.Ask)}, ignored (IgnoreMarketPriceUpTo).");
+				Info($"[{position}/{toSell.Count}] {group.Name}: market price {Money(result.Ask)}, ignored{(IgnoreList.Add(group.Name) ? $" from now on (added to config/{IgnoreList.FileName})" : "")}.");
 
 				continue;
 			}
