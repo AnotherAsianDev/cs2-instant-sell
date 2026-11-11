@@ -10,7 +10,11 @@
 		"AutoConfirm": true,
 		"MaxItemsPerRun": 3,
 		"Keep": [ "Dragon Lore", "Souvenir" ],
-		"AutoRunHours": 0,
-		"AutoRunTimes": [ "04:00" ]
+		"AutoRunHours": 6,
+		"AutoRunTimes": [],
+		"BuyTf2Keys": false,
+		"Tf2KeyMaxPrice": 2.50,
+		"Tf2KeyKeepBalance": 0,
+		"Tf2KeyMaxPerRun": 0
 	}
 }

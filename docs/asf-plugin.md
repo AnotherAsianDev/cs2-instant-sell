@@ -32,8 +32,12 @@ Add the block **inside the outer braces** of the bot's config file, with a comma
 		"AutoConfirm": true,
 		"MaxItemsPerRun": 3,
 		"Keep": [ "Dragon Lore", "Souvenir" ],
-		"AutoRunHours": 0,
-		"AutoRunTimes": [ "04:00" ]
+		"AutoRunHours": 6,
+		"AutoRunTimes": [],
+		"BuyTf2Keys": false,
+		"Tf2KeyMaxPrice": 2.50,
+		"Tf2KeyKeepBalance": 0,
+		"Tf2KeyMaxPerRun": 0
 	}
 }
 ```
@@ -53,12 +57,32 @@ If you edit bot configs with ASF-ui, check the file afterwards: this plugin has 
 | `AutoConfirm` | `true` | Accept the market confirmations with ASF's 2FA. Needs 2FA imported into ASF for that bot. |
 | `MaxItemsPerRun` | `0` | Safety cap of items sold per run. `0` means no cap. |
 | `Keep` | `[]` | Texts; an item whose market name contains one of them is never sold (case-insensitive). |
-| `AutoRunHours` | `0` | Real-sell automatically every N hours. `0` means never. |
-| `AutoRunTimes` | `[]` | Real-sell automatically every day at these fixed times, 24h `"HH:mm"` in the local time of the machine running ASF, e.g. `[ "04:00" ]` or `[ "04:00", "16:30" ]`. If set, it is used instead of `AutoRunHours`. Invalid entries are ignored with a warning. |
+| `AutoRunHours` | `0` | Real-sell automatically every N hours (minimum 1, `0` = off). Good values are 6 to 12: new items (drops, unlocked trade holds) appear slowly, and hourly runs only add Steam requests. |
+| `AutoRunTimes` | `[]` | Real-sell automatically every day at these fixed times, 24h `"HH:mm"` in the local time of the machine running ASF, e.g. `[ "04:00" ]` or `[ "04:00", "16:30" ]`. Invalid entries are ignored with a warning. Can be combined with `AutoRunHours`; runs never overlap. |
+| `BuyTf2Keys` | `false` | After each real run, spend the wallet balance on TF2 keys (see below). |
+| `Tf2KeyMaxPrice` | `0` | **Required for buying.** The most you accept to pay per key, fees included, in the wallet currency (e.g. `2.50`). If the cheapest key costs more, nothing is bought. `0` = nothing is bought. |
+| `Tf2KeyKeepBalance` | `0` | Wallet balance that is never spent on keys. |
+| `Tf2KeyMaxPerRun` | `0` | Optional cap of keys per run. `0` = no cap, buy as many as the balance allows. |
 
 With `AutoRunTimes`, runs happen at those clock times every day (the log shows the next run time when the config loads). With `AutoRunHours`, the first run happens 10 minutes after ASF starts (or after the bot config is reloaded), then every N hours. A run is skipped if the bot is not logged in, or if another run is still going.
 
 **Docker and time zones:** `AutoRunTimes` uses the clock of the machine or container running ASF, which in Docker is usually UTC. Set the time zone on the ASF service, for example `environment: - TZ=Europe/Zurich` in `docker-compose.yml`, then recreate the container. The log line "Next run: ..." shows the time the plugin expects.
+
+## Buying TF2 keys
+
+With `BuyTf2Keys: true` and `Tf2KeyMaxPrice` set, every real run (command or scheduled) ends like this: the CS2 items are sold and confirmed, the plugin waits 10 seconds for the money to arrive, then it repeatedly buys the **cheapest "Mann Co. Supply Crate Key" listing** on the Steam Community Market (TF2, app 440) as long as
+
+- the wallet balance minus `Tf2KeyKeepBalance` covers the price,
+- the price is at most `Tf2KeyMaxPrice`,
+- `Tf2KeyMaxPerRun` (if set) is not reached.
+
+The price is read again before every key. After each purchase the plugin checks that the wallet balance really dropped, and it stops at the first anything-unexpected (it never retries a purchase blindly). The keys land in the bot's TF2 inventory. `!isell <bot>` (dry run) also shows the cheapest key price and how many keys the current balance would buy, without buying.
+
+Notes:
+
+- Money already in the wallet is spent too, not only the proceeds of this run. Use `Tf2KeyKeepBalance` to hold some back.
+- Steam may ask for a mobile confirmation of the purchase. With `AutoConfirm` on and ASF 2FA imported, the plugin accepts it.
+- Steam's purchase endpoint is undocumented. Test it first: dry run, then `Tf2KeyMaxPerRun: 1` for the first real run.
 
 ## Commands
 

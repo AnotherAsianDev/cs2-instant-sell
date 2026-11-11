@@ -30,11 +30,25 @@ internal sealed class SellerConfig {
 	public List<string> Keep { get; init; } = [];
 
 	// Run a real sell automatically every N hours. 0 means never (only the commands sell).
+	// Minimum is 1 (smaller values are raised to 1). Can be combined with AutoRunTimes; runs never overlap.
 	public int AutoRunHours { get; init; }
 
 	// Run a real sell automatically at these fixed times of day (24h "HH:mm", local time of the machine running ASF),
-	// e.g. [ "04:00" ] or [ "04:00", "16:30" ]. If set, this is used instead of AutoRunHours.
+	// e.g. [ "04:00" ] or [ "04:00", "16:30" ].
 	public List<string> AutoRunTimes { get; init; } = [];
+
+	// After selling, use the wallet balance to buy TF2 "Mann Co. Supply Crate Key" from the Steam market (instant buy of the cheapest listings).
+	// Off by default. It does nothing unless Tf2KeyMaxPrice is also set.
+	public bool BuyTf2Keys { get; init; }
+
+	// Hard limit: never pay more than this per key (wallet currency, fees included). 0 = not set, so nothing is bought.
+	public decimal Tf2KeyMaxPrice { get; init; }
+
+	// Wallet balance that is never spent on keys.
+	public decimal Tf2KeyKeepBalance { get; init; }
+
+	// Optional cap of keys bought per run. 0 = no cap: buy as many as the balance allows.
+	public int Tf2KeyMaxPerRun { get; init; }
 
 	private static readonly JsonSerializerOptions Options = new() { PropertyNameCaseInsensitive = true, ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
 
