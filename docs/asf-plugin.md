@@ -70,19 +70,18 @@ With `AutoRunTimes`, runs happen at those clock times every day (the log shows t
 
 ## Buying TF2 keys
 
-With `BuyTf2Keys: true` and `Tf2KeyMaxPrice` set, every real run (command or scheduled) ends like this: the CS2 items are sold and confirmed, the plugin waits 10 seconds for the money to arrive, then it repeatedly buys the **cheapest "Mann Co. Supply Crate Key" listing** on the Steam Community Market (TF2, app 440) as long as
+With `BuyTf2Keys: true` and `Tf2KeyMaxPrice` set, every real run (command or scheduled) ends like this: the CS2 items are sold and confirmed, the plugin waits 10 seconds for the money to arrive, then it buys "Mann Co. Supply Crate Key" (TF2, app 440) one by one as long as
 
 - the wallet balance minus `Tf2KeyKeepBalance` covers the price,
-- the price is at most `Tf2KeyMaxPrice`,
+- the current lowest price is at most `Tf2KeyMaxPrice`,
 - `Tf2KeyMaxPerRun` (if set) is not reached.
 
-The price is read again before every key. After each purchase the plugin checks that the wallet balance really dropped, and it stops at the first anything-unexpected (it never retries a purchase blindly). The keys land in the bot's TF2 inventory. `!isell <bot>` (dry run) also shows the cheapest key price and how many keys the current balance would buy, without buying.
+How a key is bought: the price is read from the market order book, then a buy order is placed at exactly the lowest sell price, which Steam fills immediately. The plugin then checks that the wallet balance really dropped. If it did not (for example the price moved), it tries the mobile confirmation (if `AutoConfirm` is on), and otherwise cancels the order and stops. It never retries a purchase blindly. The keys land in the bot's TF2 inventory. `!isell <bot>` (dry run) also shows the current key price and how many keys the current balance would buy, without buying.
 
 Notes:
 
 - Money already in the wallet is spent too, not only the proceeds of this run. Use `Tf2KeyKeepBalance` to hold some back.
-- Steam may ask for a mobile confirmation of the purchase. With `AutoConfirm` on and ASF 2FA imported, the plugin accepts it.
-- Steam's purchase endpoint is undocumented. Test it first: dry run, then `Tf2KeyMaxPerRun: 1` for the first real run.
+- Steam's buy endpoints are undocumented. Test it first: dry run, then `Tf2KeyMaxPerRun: 1` for the first real run.
 
 ## Commands
 
@@ -120,7 +119,7 @@ During a real run: `SOLD [n] <item> for <price>`, `FAILED <item>: <reason>`, `bu
 - Per run: 1 inventory request (per 2000 items), 1 market page request for the wallet settings, then **one buy-order request per different item** (not per copy), plus **one listing request per sold item** (1.5 s apart).
 - A real run prices and sells item by item, so each item costs one buy-order request, not two. The dry run (`!isell`) prices everything first to show the plan.
 - Items with no usable buy order are remembered for 3 hours and skipped without any request by real runs. A dry run always checks them again.
-- Key buying adds one listing request per key bought (plus one more for the final check).
+- Key buying adds one price request and one buy-order request per key.
 
 ## Troubleshooting
 
