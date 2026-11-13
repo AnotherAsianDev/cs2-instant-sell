@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using ArchiSteamFarm.Steam.Integration;
@@ -45,8 +46,9 @@ internal sealed partial class SellerRunner {
 			await Task.Delay(TimeSpan.FromSeconds(10), ct).ConfigureAwait(false);
 		}
 
-		long balance = Bot.WalletBalance;
-		Info(tag + $"wallet balance {money(balance)}, keeping {money(keep)}, price limit {money(maxPrice)} per key, {maxKeysText}.");
+		// Read the balance fresh from Steam. ASF's cached balance does not notice when pending funds are released.
+		(long balance, long pending) = await ReadBalanceAsync(ct).ConfigureAwait(false);
+		Info(tag + $"wallet balance {money(balance)}{(pending > 0 ? $" (plus {money(pending)} pending, not spendable yet)" : "")}, keeping {money(keep)}, price limit {money(maxPrice)} per key, {maxKeysText}.");
 
 		int bought = 0;
 		long spent = 0;
@@ -83,7 +85,7 @@ internal sealed partial class SellerRunner {
 				break;
 			}
 
-			long before = Bot.WalletBalance;
+			long before = balance;
 			(bool ok, string message) = await BuyOneKeyAsync(ask, wallet, before, ct).ConfigureAwait(false);
 
 			if (!ok) {
@@ -94,8 +96,8 @@ internal sealed partial class SellerRunner {
 			}
 
 			bought++;
-			spent += before - Bot.WalletBalance;
-			balance = Bot.WalletBalance;
+			balance = LastBalance;
+			spent += before - balance;
 			Info(tag + $"BOUGHT [{bought}] {KeyName} for {money(before - balance)}. Wallet now {money(balance)}.");
 
 			await Task.Delay(2000, ct).ConfigureAwait(false);
@@ -269,15 +271,44 @@ internal sealed partial class SellerRunner {
 		return (root, raw.Length > 300 ? raw[..300] : raw);
 	}
 
+	private long LastBalance;
+
+	// Spendable wallet balance and pending (delayed) balance in minor units, read from the market page. Falls back to ASF's cached value.
+	private async Task<(long Balance, long Pending)> ReadBalanceAsync(CancellationToken ct) {
+		using HtmlDocumentResponse? response = await Bot.ArchiWebHandler.UrlGetToHtmlDocumentWithSession(new Uri(ArchiWebHandler.SteamCommunityURL, "/market/"), cancellationToken: ct).ConfigureAwait(false);
+		string? html = response?.Content?.Source.Text;
+		Match match = string.IsNullOrEmpty(html) ? Match.Empty : WalletRegex().Match(html);
+
+		if (match.Success) {
+			try {
+				using JsonDocument doc = JsonDocument.Parse(match.Groups[1].Value);
+
+				if (doc.RootElement.TryGetProperty("wallet_balance", out _)) {
+					return ((long) ReadNumber(doc.RootElement, "wallet_balance", 0), (long) ReadNumber(doc.RootElement, "wallet_delayed_balance", 0));
+				}
+			} catch (JsonException) {
+				// Fall through to the cached value.
+			}
+		}
+
+		Warn("TF2 keys: could not read the wallet balance from the market page, using ASF's cached balance (it may be out of date).");
+
+		return (Bot.WalletBalance, 0);
+	}
+
+	// True once the (fresh) wallet balance is below balanceBefore, i.e. the purchase was really paid.
 	private async Task<bool> WaitForPaymentAsync(long balanceBefore, int seconds, CancellationToken ct) {
-		for (int i = 0; i < seconds; i++) {
-			if (Bot.WalletBalance < balanceBefore) {
+		for (int waited = 0; waited <= seconds; waited += 3) {
+			(long balance, _) = await ReadBalanceAsync(ct).ConfigureAwait(false);
+			LastBalance = balance;
+
+			if (balance < balanceBefore) {
 				return true;
 			}
 
-			await Task.Delay(1000, ct).ConfigureAwait(false);
+			await Task.Delay(3000, ct).ConfigureAwait(false);
 		}
 
-		return Bot.WalletBalance < balanceBefore;
+		return false;
 	}
 }

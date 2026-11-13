@@ -82,6 +82,7 @@ How a key is bought: the price is read from the market order book, then a buy or
 
 Notes:
 
+- The balance is read fresh from Steam on every run. Funds that are still pending (delayed) are shown in the log but cannot be spent yet and are not counted.
 - Money already in the wallet is spent too, not only the proceeds of this run. Use `Tf2KeyKeepBalance` to hold some back.
 - Steam's buy endpoints are undocumented. Test it first: dry run, then `Tf2KeyMaxPerRun: 1` for the first real run.
 

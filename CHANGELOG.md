@@ -2,6 +2,10 @@
 
 Every change is published as its own version tag and release.
 
+## v1.3.0
+
+- ASF plugin: the wallet balance for TF2 key buying is now read fresh from Steam's market page on every run (also the check that a key was paid). ASF's cached balance did not notice when pending funds became available. The log shows pending funds separately.
+
 ## v1.2.0
 
 - ASF plugin: new setting `IgnoreMarketPriceUpTo` (default 0.03). Items at the market minimum price are ignored permanently and listed in `config/CS2InstantSell.ignored.txt`.
