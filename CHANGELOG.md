@@ -2,6 +2,10 @@
 
 Every change is published as its own version tag and release.
 
+## v1.5.0
+
+- ASF plugin: TF2 keys are now bought in batches. The plugin calculates how many keys the balance covers, orders them all at once, reads the balance again and repeats until nothing is left to buy. Much faster than one key at a time.
+
 ## v1.4.0
 
 - ASF plugin: buying several TF2 keys in one run no longer stops after the first key. When Steam still reports the previous buy order as open (`success: 30`), the plugin waits 5 s and tries again (up to 6 times).

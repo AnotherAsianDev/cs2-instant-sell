@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -53,40 +54,42 @@ internal sealed partial class SellerRunner {
 		int bought = 0;
 		long spent = 0;
 
-		while (bought < maxKeys) {
+		// Each round: read the price ladder, work out how many keys the balance covers, order them all at once,
+		// then read the balance again and repeat until there is nothing left to buy.
+		for (int round = 1; (bought < maxKeys) && (round <= 15); round++) {
 			ct.ThrowIfCancellationRequested();
 
-			long ask = await GetKeyAskAsync(wallet, ct).ConfigureAwait(false);
+			if (round > 1) {
+				(balance, _) = await ReadBalanceAsync(ct).ConfigureAwait(false);
+			}
 
-			if (ask <= 0) {
+			List<(long Price, long Quantity)> asks = await GetKeyAsksAsync(wallet, ct).ConfigureAwait(false);
+
+			if (asks.Count == 0) {
 				Warn(tag + "could not read the current key price, stopping.");
 
 				break;
 			}
 
-			if (ask > maxPrice) {
-				Info(tag + $"cheapest key costs {money(ask)}, above your limit of {money(maxPrice)}. Not buying.");
-
-				break;
-			}
-
 			long available = balance - keep;
+			(int count, long limit) = PlanKeys(asks, maxPrice, available, maxKeys == int.MaxValue ? int.MaxValue : maxKeys - bought);
 
-			if (available < ask) {
-				Info(tag + $"cheapest key costs {money(ask)}, only {money(Math.Max(0, available))} available above the kept balance. Done.");
+			if (count == 0) {
+				Info(tag + (asks[0].Price > maxPrice ? $"cheapest key costs {money(asks[0].Price)}, above your limit of {money(maxPrice)}. Not buying." : $"cheapest key costs {money(asks[0].Price)}, only {money(Math.Max(0, available))} available above the kept balance. Done."));
 
 				break;
 			}
 
 			if (dryRun) {
-				long count = Math.Min(maxKeys, available / ask);
-				Info(tag + $"DRY RUN: cheapest key {money(ask)}; with the current balance about {count} key(s) would be bought (price checked again for every key).");
+				Info(tag + $"DRY RUN: cheapest key {money(asks[0].Price)}; with the current balance {count} key(s) would be ordered at once (up to {money(limit)} each).");
 
 				break;
 			}
 
+			Info(tag + $"round {round}: ordering {count} key(s), up to {money(limit)} each ({money(limit * count)} reserved).");
+
 			long before = balance;
-			(bool ok, string message) = await BuyOneKeyAsync(ask, wallet, before, ct).ConfigureAwait(false);
+			(bool ok, string message, string? orderId) = await BuyBatchAsync(count, limit, wallet, before, ct).ConfigureAwait(false);
 
 			if (!ok) {
 				// Do not retry blindly: a wrong guess here would cost money.
@@ -95,10 +98,28 @@ internal sealed partial class SellerRunner {
 				break;
 			}
 
-			bought++;
-			balance = LastBalance;
-			spent += before - balance;
-			Info(tag + $"BOUGHT [{bought}] {KeyName} for {money(before - balance)}. Wallet now {money(balance)}.");
+			// Let Steam finish filling the order, then read the final balance.
+			await Task.Delay(6000, ct).ConfigureAwait(false);
+			(balance, _) = await ReadBalanceAsync(ct).ConfigureAwait(false);
+			long paid = before - balance;
+
+			int? got = string.IsNullOrEmpty(orderId) ? null : await GetBoughtAsync(orderId, ct).ConfigureAwait(false);
+
+			// Close whatever is left of the order, otherwise Steam refuses the next one.
+			if (!string.IsNullOrEmpty(orderId)) {
+				await CancelOrderAsync(orderId, ct).ConfigureAwait(false);
+			}
+
+			int keys = got ?? (int) Math.Max(1, Math.Round((double) paid / asks[0].Price));
+			bought += keys;
+			spent += paid;
+			Info(tag + $"BOUGHT {(got == null ? "about " : "")}{keys} key(s) for {money(paid)} in round {round}. Wallet now {money(balance)}.");
+
+			if (got is 0) {
+				Warn(tag + "Steam reports nothing filled although the balance dropped, stopping to be safe.");
+
+				break;
+			}
 
 			await Task.Delay(2000, ct).ConfigureAwait(false);
 		}
@@ -112,8 +133,8 @@ internal sealed partial class SellerRunner {
 		return "";
 	}
 
-	// Lowest sell price of the key (what a buyer pays, in minor units), or 0 if it could not be read.
-	private async Task<long> GetKeyAskAsync(WalletInfo wallet, CancellationToken ct) {
+	// Sell price ladder of the key (what a buyer pays, in minor units), cheapest first. Empty if it could not be read.
+	private async Task<List<(long Price, long Quantity)>> GetKeyAsksAsync(WalletInfo wallet, CancellationToken ct) {
 		string qp = JsonSerializer.Serialize(new object[] { KeyAppID, KeyName });
 		Uri url = new(ArchiWebHandler.SteamCommunityURL, $"/market/orderbook?q=Load&qp={Uri.EscapeDataString(qp)}&cc={Uri.EscapeDataString(wallet.Country)}&l=english&currency={wallet.CurrencyId}");
 		KeyValuePair<string, string>[] headers = [new("x-valve-request-type", "queryAction")];
@@ -136,17 +157,17 @@ internal sealed partial class SellerRunner {
 				continue;
 			}
 
-			long ask = ParseLowestAsk(response.Content);
+			List<(long Price, long Quantity)> asks = ParseAsks(response.Content);
 
-			if (ask <= 0) {
+			if (asks.Count == 0) {
 				string raw = response.Content.ToString();
 				Warn($"TF2 keys: unexpected price reply (HTTP {(int) response.StatusCode}): {(raw.Length > 200 ? raw[..200] + "..." : raw)}");
 			}
 
-			return ask;
+			return asks;
 		}
 
-		return 0;
+		return [];
 	}
 
 	private static long ParseLowestAsk(JsonElement root) {
@@ -184,13 +205,83 @@ internal sealed partial class SellerRunner {
 		return best > 0 ? best : (long) ReadNumber(data, "amtMinSellOrder", 0);
 	}
 
-	private async Task<(bool Success, string Message)> BuyOneKeyAsync(long price, WalletInfo wallet, long balanceBefore, CancellationToken ct) {
+	private static long ToLong(JsonElement item) => item.ValueKind == JsonValueKind.Number ? item.GetInt64() : (item.ValueKind == JsonValueKind.String) && long.TryParse(item.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed) ? parsed : 0;
+
+	private static List<(long Price, long Quantity)> ParseAsks(JsonElement root) {
+		JsonElement data = root;
+
+		for (int i = 0; i < 2; i++) {
+			if ((data.ValueKind == JsonValueKind.Object) && data.TryGetProperty("data", out JsonElement inner) && (inner.ValueKind == JsonValueKind.Object)) {
+				data = inner;
+			}
+		}
+
+		SortedDictionary<long, long> levels = [];
+
+		if ((data.ValueKind == JsonValueKind.Object) && data.TryGetProperty("rgCompactSellOrders", out JsonElement array) && (array.ValueKind == JsonValueKind.Array)) {
+			long? price = null;
+
+			// Flat list: price, quantity, price, quantity, ...
+			foreach (JsonElement item in array.EnumerateArray()) {
+				if (price == null) {
+					price = ToLong(item);
+
+					continue;
+				}
+
+				long quantity = ToLong(item);
+
+				if ((price > 0) && (quantity > 0)) {
+					levels[price.Value] = levels.GetValueOrDefault(price.Value) + quantity;
+				}
+
+				price = null;
+			}
+		}
+
+		if ((levels.Count == 0) && (data.ValueKind == JsonValueKind.Object)) {
+			long ask = (long) ReadNumber(data, "amtMinSellOrder", 0);
+
+			if (ask > 0) {
+				// No ladder in the reply: all we know is the lowest price, so plan for a single unit.
+				levels[ask] = 1;
+			}
+		}
+
+		return levels.Select(static x => (x.Key, x.Value)).ToList();
+	}
+
+	// How many keys to order at once and the highest price per key to allow. The order reserves limit * count, so it must fit the balance.
+	internal static (int Count, long Limit) PlanKeys(List<(long Price, long Quantity)> asks, long maxPrice, long available, int maxCount) {
+		int bestCount = 0;
+		long bestLimit = 0;
+		long cumulative = 0;
+
+		foreach ((long price, long quantity) in asks) {
+			if (price > maxPrice) {
+				break;
+			}
+
+			cumulative += quantity;
+
+			long count = Math.Min(Math.Min(cumulative, available / price), maxCount);
+
+			if (count > bestCount) {
+				bestCount = (int) count;
+				bestLimit = price;
+			}
+		}
+
+		return (bestCount, bestLimit);
+	}
+
+	private async Task<(bool Success, string Message, string? OrderID)> BuyBatchAsync(int quantity, long limit, WalletInfo wallet, long balanceBefore, CancellationToken ct) {
 		IDictionary<string, string> data = new Dictionary<string, string> {
 			["currency"] = wallet.CurrencyId.ToString(CultureInfo.InvariantCulture),
 			["appid"] = KeyAppID.ToString(CultureInfo.InvariantCulture),
 			["market_hash_name"] = KeyName,
-			["price_total"] = price.ToString(CultureInfo.InvariantCulture),
-			["quantity"] = "1",
+			["price_total"] = (limit * quantity).ToString(CultureInfo.InvariantCulture),
+			["quantity"] = quantity.ToString(CultureInfo.InvariantCulture),
 			["billing_state"] = "",
 			["save_my_address"] = "0"
 		};
@@ -209,7 +300,7 @@ internal sealed partial class SellerRunner {
 		// then the same request is sent again together with that id.
 		if ((root.ValueKind == JsonValueKind.Object) && (ReadNumber(root, "success", 0) == 22) && root.TryGetProperty("confirmation", out JsonElement conf) && (conf.ValueKind == JsonValueKind.Object) && conf.TryGetProperty("confirmation_id", out JsonElement confId)) {
 			if (!Config.AutoConfirm) {
-				return (false, "The purchase needs a mobile confirmation, but AutoConfirm is off.");
+				return (false, "The purchase needs a mobile confirmation, but AutoConfirm is off.", null);
 			}
 
 			string? confirmationId = confId.ValueKind == JsonValueKind.String ? confId.GetString() : confId.ToString();
@@ -225,21 +316,17 @@ internal sealed partial class SellerRunner {
 		if ((root.ValueKind != JsonValueKind.Object) || (ReadNumber(root, "success", 0) != 1)) {
 			// After a confirmation Steam's reply code is not reliable, so the wallet balance decides.
 			if (confirmedRound && await WaitForPaymentAsync(balanceBefore, 12, ct).ConfigureAwait(false)) {
-				return (true, "");
+				return (true, "", OrderIdOf(root));
 			}
 
-			return (false, "Steam's reply: " + raw);
+			return (false, "Steam's reply: " + raw, null);
 		}
 
-		string? orderId = null;
-
-		if (root.TryGetProperty("buy_orderid", out JsonElement id)) {
-			orderId = id.ValueKind == JsonValueKind.String ? id.GetString() : id.ToString();
-		}
+		string? orderId = OrderIdOf(root);
 
 		// The order is placed exactly at the lowest sell price, so it should fill at once. The wallet balance is the proof.
 		if (await WaitForPaymentAsync(balanceBefore, 12, ct).ConfigureAwait(false)) {
-			return (true, "");
+			return (true, "", orderId);
 		}
 
 		// Some accounts need the purchase confirmed in the mobile app.
@@ -247,19 +334,45 @@ internal sealed partial class SellerRunner {
 			await ConfirmAsync(EMobileConfirmationType.MarketPurchase).ConfigureAwait(false);
 
 			if (await WaitForPaymentAsync(balanceBefore, 12, ct).ConfigureAwait(false)) {
-				return (true, "");
+				return (true, "", orderId);
 			}
 		}
 
 		// Not filled (for example the price moved up in the meantime): do not leave an open order behind.
 		if (!string.IsNullOrEmpty(orderId)) {
-			IDictionary<string, string> cancel = new Dictionary<string, string> { ["buy_orderid"] = orderId };
-			await Bot.ArchiWebHandler.UrlPostToJsonObjectWithSession<JsonElement>(new Uri(ArchiWebHandler.SteamCommunityURL, "/market/cancelbuyorder/"), data: cancel, referer: KeyPage, requestOptions: KeepErrors, maxTries: 1, cancellationToken: ct).ConfigureAwait(false);
+			await CancelOrderAsync(orderId, ct).ConfigureAwait(false);
 
-			return (false, $"The buy order (id {orderId}) was accepted but the wallet balance did not drop, so it was cancelled. Steam's reply: {raw}");
+			return (false, $"The buy order (id {orderId}) was accepted but the wallet balance did not drop, so it was cancelled. Steam's reply: {raw}", null);
 		}
 
-		return (false, "The buy order was accepted but the wallet balance did not drop. Check your market history. Steam's reply: " + raw);
+		return (false, "The buy order was accepted but the wallet balance did not drop. Check your market history. Steam's reply: " + raw, null);
+	}
+
+	private static string? OrderIdOf(JsonElement root) => (root.ValueKind == JsonValueKind.Object) && root.TryGetProperty("buy_orderid", out JsonElement id) ? (id.ValueKind == JsonValueKind.String ? id.GetString() : id.ToString()) : null;
+
+	private async Task CancelOrderAsync(string orderId, CancellationToken ct) {
+		IDictionary<string, string> cancel = new Dictionary<string, string> { ["buy_orderid"] = orderId };
+
+		// Best effort: a fully filled order cannot be cancelled, which is fine.
+		await Bot.ArchiWebHandler.UrlPostToJsonObjectWithSession<JsonElement>(new Uri(ArchiWebHandler.SteamCommunityURL, "/market/cancelbuyorder/"), data: cancel, referer: KeyPage, requestOptions: KeepErrors, maxTries: 1, cancellationToken: ct).ConfigureAwait(false);
+	}
+
+	// Number of keys the order has really filled so far, or null if Steam's status could not be read.
+	private async Task<int?> GetBoughtAsync(string orderId, CancellationToken ct) {
+		string? sessionId = Bot.ArchiWebHandler.WebBrowser.CookieContainer.GetAllCookies().Cast<Cookie>().FirstOrDefault(static c => c.Name == "sessionid" && c.Domain.Contains("steamcommunity", StringComparison.Ordinal))?.Value;
+
+		if (string.IsNullOrEmpty(sessionId)) {
+			return null;
+		}
+
+		Uri url = new(ArchiWebHandler.SteamCommunityURL, $"/market/getbuyorderstatus/?sessionid={Uri.EscapeDataString(sessionId)}&buy_orderid={Uri.EscapeDataString(orderId)}");
+		ObjectResponse<JsonElement>? response = await Bot.ArchiWebHandler.UrlGetToJsonObjectWithSession<JsonElement>(url, referer: KeyPage, requestOptions: KeepErrors, maxTries: 1, cancellationToken: ct).ConfigureAwait(false);
+
+		if ((response == null) || (response.Content.ValueKind != JsonValueKind.Object) || (ReadNumber(response.Content, "success", 0) != 1) || !response.Content.TryGetProperty("quantity", out _)) {
+			return null;
+		}
+
+		return (int) (ReadNumber(response.Content, "quantity", 0) - ReadNumber(response.Content, "quantity_remaining", 0));
 	}
 
 	private async Task<(JsonElement Root, string Raw)> PostBuyOrderAsync(IDictionary<string, string> data, CancellationToken ct) {
