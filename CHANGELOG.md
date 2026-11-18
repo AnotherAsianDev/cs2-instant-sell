@@ -2,6 +2,10 @@
 
 Every change is published as its own version tag and release.
 
+## v1.4.0
+
+- ASF plugin: buying several TF2 keys in one run no longer stops after the first key. When Steam still reports the previous buy order as open (`success: 30`), the plugin waits 5 s and tries again (up to 6 times).
+
 ## v1.3.0
 
 - ASF plugin: the wallet balance for TF2 key buying is now read fresh from Steam's market page on every run (also the check that a key was paid). ASF's cached balance did not notice when pending funds became available. The log shows pending funds separately.

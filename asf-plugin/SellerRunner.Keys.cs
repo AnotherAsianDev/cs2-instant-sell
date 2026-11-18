@@ -198,6 +198,13 @@ internal sealed partial class SellerRunner {
 		bool confirmedRound = false;
 		(JsonElement root, string raw) = await PostBuyOrderAsync(data, ct).ConfigureAwait(false);
 
+		// Steam answers success 30 while the previous key's order is still being closed. Nothing was bought then, so waiting and trying again is safe.
+		for (int wait = 1; (wait <= 6) && (root.ValueKind == JsonValueKind.Object) && (ReadNumber(root, "success", 0) == 30); wait++) {
+			Info("TF2 keys: Steam still has the previous buy order open, waiting 5 s...");
+			await Task.Delay(5000, ct).ConfigureAwait(false);
+			(root, raw) = await PostBuyOrderAsync(data, ct).ConfigureAwait(false);
+		}
+
 		// Steam first answers with success 22 + a confirmation id: the purchase must be confirmed in the mobile app,
 		// then the same request is sent again together with that id.
 		if ((root.ValueKind == JsonValueKind.Object) && (ReadNumber(root, "success", 0) == 22) && root.TryGetProperty("confirmation", out JsonElement conf) && (conf.ValueKind == JsonValueKind.Object) && conf.TryGetProperty("confirmation_id", out JsonElement confId)) {
